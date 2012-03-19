@@ -1,2 +1,5 @@
 svn-notifier
 svn提交更新后 向目标Gmail发送提交信息
+
+依赖dnspython库和pyxmpp2
+代码中直接添加了pyxmpp2，代码来源: https://github.com/Jajcus/pyxmpp2.git
