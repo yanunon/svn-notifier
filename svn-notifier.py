@@ -17,8 +17,14 @@ import subprocess
 
 from threading import Thread
 from Queue import Queue
+from ConfigParser import ConfigParser
 
+# import for email
+import smtplib
+from email.MIMEMultipart import MIMEMultipart
+from email.mime.text import MIMEText
 
+# import for xmpp
 from pyxmpp2.interfaces import EventHandler, event_handler, QUIT
 from pyxmpp2.client import Client
 from pyxmpp2.settings import XMPPSettings
@@ -27,13 +33,38 @@ from pyxmpp2.streamevents import AuthorizedEvent, DisconnectedEvent
 from pyxmpp2.message import Message
 
 
+class GMail(object):
+    
+    def __init__(self, id, passwd):
+        self.id = id
+        self.passwd = passwd
+        
+    def send(self, receivers, subject, body):
+        msg = MIMEMultipart()
+        msg['Subject'] = subject
+        msg['From'] = self.id
+        msg['To'] = ', '.join(receivers)
+        txt = MIMEText(body)
+        msg.attach(txt)
+        
+        try:
+            smtp = smtplib.SMTP('smtp.gmail.com')
+            smtp.starttls()
+            smtp.login(self.id, self.passwd)
+            smtp.sendmail(self.id, receivers, msg.as_string())
+            smtp.quit()
+        except Exception,e:
+            print e
+            print msg.as_string()
+        
 
 class MessageSender(Thread):
-    def __init__(self, client, queue, receivers, name='MessageSender'):
+    def __init__(self, xmpp_client, email_client, queue, config, name='MessageSender'):
         Thread.__init__(self, name=name)
-        self.client = client
+        self.xmpp_client = xmpp_client
+        self.email_client = email_client
         self.queue = queue
-        self.receivers = receivers
+        self.config = config
         self.is_run = True
         
     def run(self):
@@ -42,15 +73,25 @@ class MessageSender(Thread):
                 time.sleep(0.1)
             else:
                 msg = self.queue.get()
+                receivers = self.config.get(msg['n'], 'receivers')
+                receivers = receivers.split(',')
                 msg_body = self.get_msg_body(msg)
                 print msg_body
-                for receiver in self.receivers:
-                    msg_obj = Message(to_jid=receiver, body=msg_body, subject=None, stanza_type='chat')
-                    try:
-                        self.client.stream.send(msg_obj)
-                    except Exception, e:
-                        print 'self.name Error%s' % e
-                print 'Send msg'
+                if self.xmpp_client:
+                    for receiver in receivers:
+                        receiver_jid = JID(receiver.strip())
+                        msg_obj = Message(to_jid=receiver_jid, body=msg_body, subject=None, stanza_type='chat')
+                        try:
+                            self.xmpp_client.stream.send(msg_obj)
+                        except Exception, e:
+                            print 'self.name Error%s' % e
+                    print 'Send xmpp message'
+                            
+                if self.email_client:
+                    subject = 'PRIS Project:[' + msg['n'] + '] SVN Updated'
+                    self.email_client.send(receivers, subject, msg_body.encode('utf-8'))
+                    print 'Send email message'
+                
                 
     def get_msg_body(self, msg):
         command = 'svn log file://%s -r%s' % (msg['p'], msg['r'])
@@ -60,8 +101,8 @@ class MessageSender(Thread):
         svn_log = p.stdout.read()
         svn_log = svn_log.split('\n')
         committer = svn_log[1].split('|')[1].strip()
-        commit_msg = svn_log[3]
-        msg_body = '[SVN Update]\nProject: %s\nVersion: %s\nCommitter: %s\nCommit Message: %s' % (msg['n'], msg['r'], committer, commit_msg)
+        commit_msg = '\n'.join(svn_log[3:-2])
+        msg_body = '[SVN Update]\nProject: %s\nVersion: %s\nCommitter: %s\nCommit Message:\n%s' % (msg['n'], msg['r'], committer, commit_msg)
         msg_body = msg_body.decode('utf-8')
         return msg_body
     
@@ -72,23 +113,43 @@ class MessageSender(Thread):
 class GTalkRobot(EventHandler, Thread):
     
     def __init__(self):
-        Thread.__init__(self, name='GTalkRobot')
+        Thread.__init__(self, name='Robot')
+        self.config = ConfigParser()
+        self.use_xmpp = False
+        self.use_email = False
+        self.xmpp_client = None
+        self.email_client = None
         
+    def setup(self, config):
+        self.config.read(config)
+        self.use_xmpp = self.config.getboolean("Robot", 'xmpp')
+        self.use_email =self.config.getboolean("Robot", 'email')
+        self.sender_id = self.config.get("Robot", 'id')
+        self.sender_passwd = self.config.get("Robot", 'passwd')
         
-    def setup(self, id, passwd, receivers):
-        self.settings = XMPPSettings({'starttls': True, 'tls_verify_peer': False, 'password': passwd})
-        self.client = Client(JID(id), [self], self.settings)
+        if self.use_xmpp:
+            self.xmpp_settings = XMPPSettings({'starttls': True, 'tls_verify_peer': False, 'password': self.sender_passwd})
+            self.xmpp_client = Client(JID(self.sender_id), [self], self.xmpp_settings)
+        
+        if self.use_email:
+            self.email_client = GMail(self.sender_id, self.sender_passwd)
+            
         self.msg_queue = Queue()
-        self.receivers = [JID(receiver) for receiver in receivers]
-        self.sender = MessageSender(self.client, self.msg_queue, self.receivers)
+        #self.receivers = [JID(receiver) for receiver in receivers]
+        self.sender = MessageSender(self.xmpp_client, self.email_client, self.msg_queue, self.config)
+        
         
     def run(self):
-        self.client.connect()
-        self.client.run()
+        if self.xmpp_client:
+            self.xmpp_client.connect()
+            self.xmpp_client.run()
+        else:
+            self.sender.start()
 
     def disconnect(self):
-        self.client.disconnect()
-        self.client.run(timeout = 2)
+        if self.xmpp_client:
+            self.xmpp_client.disconnect()
+            self.xmpp_client.run(timeout = 2)
     
     def join(self, timeout=None):
         self.disconnect()
@@ -129,14 +190,9 @@ class Notifier(object):
     def __init__(self, config='.config', port=8007):
         self.config = config
         self.port = port
-
-        if os.path.exists(self.config):
-            f = open(self.config, 'r')
-            self.emails = [line[:-1].strip() for line in f.readlines()]
-            f.close()
     
     def start(self):
-        robot.setup('pris@yangjunyong.info', 'pris803pris', self.emails)
+        robot.setup(self.config)
         robot.start()
         
         self.httpd = NetServer(('', self.port), NetHandler)
@@ -153,12 +209,14 @@ class Notifier(object):
 #        p.wait()
 #        svn_log = p.stdout.read()
 #        svn_log = svn_log.split('\n')
+#        print svn_log
 #        committer = svn_log[1].split('|')[1].strip()
-#        commit_msg = svn_log[3]
-#        msg_body = '[SVN Update]\nProject: %s\nReversion: %s\nCommitter: %s\nCommit Message: %s' % (msg['n'], msg['r'], committer, commit_msg)
+#        commit_msg = '\n'.join(svn_log[3:-2])
+#        msg_body = '[SVN Update]\nProject: %s\nReversion: %s\nCommitter: %s\nCommit Message:\n%s' % (msg['n'], msg['r'], committer, commit_msg)
 #        return msg_body
 
 if __name__ == '__main__':
+   
     notifier = Notifier()
     
     try:
@@ -166,7 +224,7 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         pass
     notifier.stop()
-#    msg={'r':'4', 'n':'adaboost'}
+#    msg={'r':'44', 'n':'HOG'}
 #    s2=get_msg_body(msg)
 #    print s2.decode('utf-8')
     
