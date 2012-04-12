@@ -73,7 +73,10 @@ class MessageSender(Thread):
                 time.sleep(0.1)
             else:
                 msg = self.queue.get()
-                receivers = self.config.get(msg['n'], 'receivers')
+                if msg['n'] in self.config.sections():
+                    receivers = self.config.get(msg['n'], 'receivers')
+                else:
+                    receivers = self.config.get('Default', 'receivers')
                 receivers = receivers.split(',')
                 msg_body = self.get_msg_body(msg)
                 print msg_body
