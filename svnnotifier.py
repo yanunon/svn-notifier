@@ -191,7 +191,7 @@ class NetServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
 class Notifier(object):
     global robot
     def __init__(self, config='.config', port=8007):
-        self.config = config
+        self.config = os.path.abspath(config)
         self.port = port
     
     def start(self):
