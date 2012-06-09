@@ -3,3 +3,6 @@ svn提交更新后 向目标Gmail发送提交信息
 
 依赖dnspython库和pyxmpp2
 代码中直接添加了pyxmpp2，代码来源: https://github.com/Jajcus/pyxmpp2.git
+
+使用:
+	修改配置文件.config，将svnnotifier-daemon放在/etc/init.d/下，使用命令"update-rc.d svnnotifier-daemon defaults"即可开机启动svnnotifier

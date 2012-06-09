@@ -73,7 +73,10 @@ class MessageSender(Thread):
                 time.sleep(0.1)
             else:
                 msg = self.queue.get()
-                receivers = self.config.get(msg['n'], 'receivers')
+                if msg['n'] in self.config.sections():
+                    receivers = self.config.get(msg['n'], 'receivers')
+                else:
+                    receivers = self.config.get('Default', 'receivers')
                 receivers = receivers.split(',')
                 msg_body = self.get_msg_body(msg)
                 print msg_body
@@ -188,7 +191,7 @@ class NetServer(SocketServer.ThreadingMixIn, BaseHTTPServer.HTTPServer):
 class Notifier(object):
     global robot
     def __init__(self, config='.config', port=8007):
-        self.config = config
+        self.config = os.path.abspath(config)
         self.port = port
     
     def start(self):
@@ -202,11 +205,29 @@ class Notifier(object):
         robot.join()
         self.httpd.shutdown()
 
+#def get_msg_body(msg):
+#        command = 'svn log http://192.168.0.115/svn/%s -r%s' % (msg['n'], msg['r'])
+#        command = command.split(' ')
+#        p = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+#        p.wait()
+#        svn_log = p.stdout.read()
+#        svn_log = svn_log.split('\n')
+#        print svn_log
+#        committer = svn_log[1].split('|')[1].strip()
+#        commit_msg = '\n'.join(svn_log[3:-2])
+#        msg_body = '[SVN Update]\nProject: %s\nReversion: %s\nCommitter: %s\nCommit Message:\n%s' % (msg['n'], msg['r'], committer, commit_msg)
+#        return msg_body
+
 if __name__ == '__main__':
+   
     notifier = Notifier()
+    
     try:
         notifier.start()
     except KeyboardInterrupt:
         pass
     notifier.stop()
+#    msg={'r':'44', 'n':'HOG'}
+#    s2=get_msg_body(msg)
+#    print s2.decode('utf-8')
     
